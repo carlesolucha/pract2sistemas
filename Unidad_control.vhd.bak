@@ -1,0 +1,179 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+entity Unidad_control is
+    port(
+        clk : in std_logic;
+        reset_n : in std_logic;
+        data    : in std_logic;
+        paridad : in std_logic;
+        co_medio  : in std_logic;
+        en_contador : out std_logic;
+        en_registro : out std_logic;
+        en_paridad  : out std_logic;
+        err_trama : out std_logic;
+        err_paridad : out std_logic;
+        en_paralelo: out std_logic;
+        contar      : out std_logic_vector(3 downto 0)
+        -- esta variable la utilizo solo para la simulaciÃ³n
+    );
+end Unidad_control;
+
+architecture behavioral of Unidad_control is
+
+    signal empieza,en, aux : std_logic;
+    signal cuenta : std_logic_vector(3 downto 0);
+
+    type t_estados is (Reposo,Arranque,Espera1bit,Registrar,Par,ErrorParidad,ErrorTrama,Parar,Paralelo); --
+    signal estado_act, estado_sig : t_estados;
+
+    component DetectorFlancoBajada
+    port(
+		e			: in std_logic;
+		reset_n	    : in std_logic;
+		clk		    : in std_logic;
+		s			: out std_logic
+    );
+    end component;
+
+    component Contador
+        port(
+            reset_n : in std_logic;
+            aux     : in std_logic;
+            clk     : in std_logic;
+            en      : in std_logic;
+            salida  : out std_logic_vector(3 downto 0)
+        );
+    end component;
+
+
+begin
+    i1_Flanco: DetectorFlancoBajada
+    port map(
+        e   => data,
+        reset_n => reset_n,
+        clk => clk,
+        s   => empieza
+    );
+
+    i1_Contador : Contador
+    port map(
+        reset_n => reset_n,
+        aux     => aux,
+        clk     => clk,
+        en      => en,
+        salida  => cuenta
+    );
+
+
+    VarEstado: process(clk,reset_n)
+    begin
+      if reset_n = '0' then
+        estado_act <= Reposo;
+      elsif rising_edge(clk) then
+        estado_act <= estado_sig;
+      end if;
+    end process VarEstado;
+
+    TransicionEstados : process (estado_act, estado_sig,empieza,co_medio,data,paridad)
+    begin
+        estado_sig <= estado_act;
+        case estado_act is
+            when Reposo =>
+                if empieza = '1' then
+                    estado_sig <= Arranque;
+                end if;
+            when Arranque =>
+                if co_medio = '1' then
+                    if data = '0' then
+                        estado_sig <= Espera1bit;
+                    elsif data = '1' then
+                        estado_sig <= ErrorTrama;
+                    end if;
+                end if;
+            when Espera1bit =>
+                if co_medio = '1' then
+                    if cuenta = "1000" then
+                        estado_sig <= Par;
+                    elsif cuenta = "1001" then
+                        estado_sig <= Parar;
+                    else
+                        estado_sig <= Registrar;
+                    end if;
+                end if;
+            when Registrar =>
+                estado_sig <= Espera1bit;
+            when Par => 
+                if paridad = '0' then
+                    estado_sig <= Espera1bit;
+                else
+                    estado_sig <= ErrorParidad;
+                end if;
+            when Parar =>
+                if data = '1' then
+                    estado_sig <= Paralelo;
+                else
+                    estado_sig <= ErrorTrama;
+                end if;
+            when Paralelo =>
+                estado_sig <= Reposo;
+            when ErrorTrama =>
+                if empieza = '1' then
+                    estado_sig <= Arranque;
+                end if;
+            when ErrorParidad =>
+                if empieza = '1' then
+                    estado_sig <= Arranque;
+                end if;
+            when others =>
+                estado_sig <= Reposo;
+        end case;
+    end process TransicionEstados;
+
+
+    Salidas : process (estado_act)
+    begin
+
+        aux         <= '0';
+        en          <= '0';
+        en_contador   <= '0';
+        err_trama   <= '0';
+        en_registro   <= '0';
+        en_paridad    <= '0';
+        err_paridad <= '0';
+        en_paralelo <= '0';
+
+        case estado_act is
+            when Reposo =>
+                null;
+            when Arranque =>
+                aux <= '1';
+                en_contador <= '1';
+            when Espera1bit =>
+                en_contador <= '1';
+            when Registrar =>
+				en <= '1';
+                en_registro <= '1';
+                en_paridad <= '1';
+                en_contador <= '1';
+            when Par =>
+				en <= '1';
+                en_paridad <= '1';
+                en_contador <= '1';
+            when Parar =>
+                null;
+            when Paralelo =>
+                en_paralelo <= '1';
+            when ErrorTrama =>
+                err_trama <= '1';
+            when ErrorParidad =>
+                err_paridad <= '1';
+            when others =>
+                null;
+        end case;
+    end process Salidas;
+
+   contar <= cuenta;
+
+end behavioral;
